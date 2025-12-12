@@ -103,14 +103,20 @@
             if (selected) {
                 currentWasAdded = true;
             }
-            select.append('<option value="' + v.id + '"' + selected + '>' +
-                String(v.title || v.id) + '</option>');
+            var $option = $('<option>')
+                .val(v.id)
+                .prop('selected', !!selected)
+                .text(String(v.title || v.id));
+            select.append($option);
         }
 
         // If current view isn't in the views list (or filtered out), keep it visible.
         if (current && !currentWasAdded) {
-            select.append('<option value="' + current + '" selected>' +
-                String(current) + '</option>');
+            var $option = $('<option>')
+                .val(current)
+                .prop('selected', true)
+                .text(String(current));
+            select.append($option);
         }
 
         if (!state.settings.zendeskDomain) {
