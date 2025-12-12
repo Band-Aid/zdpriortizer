@@ -2,6 +2,8 @@
 
 const ports = new Set();
 
+let ticketRefreshInProgress = false;
+
 function storageGet(keys) {
     return new Promise((resolve) => chrome.storage.local.get(keys, resolve));
 }
@@ -27,12 +29,14 @@ const settings = {
     zendeskDomain: '',
     viewID: null,
     userID: null,
+    viewFilterIds: [],
 
     async load() {
         const loaded = await storageGet(null);
         this.zendeskDomain = loaded.zendeskDomain || '';
         this.viewID = loaded.viewID || null;
         this.userID = loaded.userID || null;
+        this.viewFilterIds = Array.isArray(loaded.viewFilterIds) ? loaded.viewFilterIds : [];
     },
 
     async save() {
@@ -40,6 +44,7 @@ const settings = {
             zendeskDomain: this.zendeskDomain,
             viewID: this.viewID,
             userID: this.userID,
+            viewFilterIds: this.viewFilterIds,
         });
     },
 };
@@ -93,6 +98,7 @@ function snapshotState() {
             zendeskDomain: settings.zendeskDomain,
             viewID: settings.viewID,
             userID: settings.userID,
+            viewFilterIds: settings.viewFilterIds,
         },
         model: {
             tickets: model.tickets,
@@ -173,10 +179,13 @@ function send_popup_failure(error) {
     sendToPorts('popup', { type: 'error', error });
 }
 
-async function fetchJSON(url) {
-    model.currentlyMakingRequest = true;
-    model.numRequestsTotal += 1;
-    send_progress_to_popup();
+async function fetchJSON(url, options) {
+    const trackProgress = !!(options && options.trackProgress);
+
+    if (trackProgress) {
+        model.numRequestsTotal += 1;
+        send_progress_to_popup();
+    }
 
     let response;
     try {
@@ -195,35 +204,37 @@ async function fetchJSON(url) {
     }
 
     const json = await response.json();
-    progress_increment();
+    if (trackProgress) {
+        progress_increment();
+    }
     return json;
 }
 
 function get_current_user(domainOverride) {
     const domain = domainOverride || settings.zendeskDomain;
     const url = `https://${domain}.zendesk.com/api/v2/users/me.json`;
-    return fetchJSON(url);
+    return fetchJSON(url, { trackProgress: false });
 }
 
 function get_current_user_views(domainOverride) {
     const domain = domainOverride || settings.zendeskDomain;
     const url = `https://${domain}.zendesk.com/api/v2/views.json`;
-    return fetchJSON(url);
+    return fetchJSON(url, { trackProgress: false });
 }
 
 function get_tickets() {
     const url = `https://${settings.zendeskDomain}.zendesk.com/api/v2/views/${settings.viewID}/tickets.json`;
-    return fetchJSON(url);
+    return fetchJSON(url, { trackProgress: true });
 }
 
 function get_ticket_audits(ticketId) {
     const url = `https://${settings.zendeskDomain}.zendesk.com/api/v2/tickets/${ticketId}/audits.json`;
-    return fetchJSON(url);
+    return fetchJSON(url, { trackProgress: true });
 }
 
 function get_ticket_audits_page(ticketId, page) {
     const url = `https://${settings.zendeskDomain}.zendesk.com/api/v2/tickets/${ticketId}/audits.json?page=${page}`;
-    return fetchJSON(url);
+    return fetchJSON(url, { trackProgress: true });
 }
 
 async function get_all_ticket_audits(ticketId) {
@@ -252,7 +263,7 @@ async function get_all_ticket_audits(ticketId) {
 
 function get_user_details(userId) {
     const url = `https://${settings.zendeskDomain}.zendesk.com/api/v2/users/${userId}.json`;
-    return fetchJSON(url);
+    return fetchJSON(url, { trackProgress: true });
 }
 
 function load_tickets_into_model(ticketsData) {
@@ -336,6 +347,10 @@ async function get_tickets_and_details() {
         return;
     }
 
+    model.currentlyMakingRequest = true;
+    model.errorState = false;
+    ticketRefreshInProgress = true;
+
     tell_popup_loading();
 
     try {
@@ -366,8 +381,12 @@ async function get_tickets_and_details() {
         process_user_details(requesterResponses.map((r) => [r]));
         update_tickets_with_details();
     } catch (e) {
+        model.currentlyMakingRequest = false;
         model.errorState = true;
+        progress_all_done();
         send_popup_failure(error_message(e && e.status ? e.status : 0));
+    } finally {
+        ticketRefreshInProgress = false;
     }
 }
 
@@ -505,8 +524,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             case 'setSettings': {
                 const next = message.settings || {};
                 settings.zendeskDomain = next.zendeskDomain || '';
-                settings.viewID = Number.isFinite(next.viewID) ? next.viewID : next.viewID || null;
-                settings.userID = Number.isFinite(next.userID) ? next.userID : next.userID || null;
+                settings.viewID = Number.parseInt(next.viewID, 10) || null;
+                settings.userID = Number.parseInt(next.userID, 10) || null;
+                if (Array.isArray(next.viewFilterIds)) {
+                    settings.viewFilterIds = next.viewFilterIds
+                        .map((v) => Number.parseInt(v, 10))
+                        .filter((v) => Number.isFinite(v));
+                }
                 await settings.save();
                 sendResponse({ ok: true });
                 return;

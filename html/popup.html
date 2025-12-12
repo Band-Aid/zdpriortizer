@@ -16,6 +16,14 @@
 </head>
 
 <body>
+    <div class="header">
+        <div class="header-row">
+            <div class="header-label">View</div>
+            <select id="view-select" class="view-select" aria-label="Select Zendesk view">
+                <option value="">Select…</option>
+            </select>
+        </div>
+    </div>
     <div id="content">
         <div id="error">
         </div>
@@ -26,9 +34,6 @@
     <div class="footer">
         <div id="view-icon">
             <i id="view-icon-fa" class="fa fa-list-ul"></i>
-        </div>
-        <div id="view-icon-sort">
-          <i id="view-icon-fa" class="fa fa-caret-square-o-down"></i>"
         </div>
         <div id="progressbar"></div>
         <p id="loading"></p>
