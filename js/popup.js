@@ -14,6 +14,42 @@
 
     var port = chrome.runtime.connect({ name: 'popup' });
 
+    var uiReady = false;
+    var pendingPortMessages = [];
+
+    function handlePortMessage(msg) {
+        if (!msg || !msg.type) {
+            return;
+        }
+        if (!uiReady) {
+            pendingPortMessages.push(msg);
+            return;
+        }
+
+        if (msg.type === 'progress') {
+            if (typeof window.setProgress === 'function') {
+                window.setProgress(msg.value);
+            }
+        } else if (msg.type === 'loading') {
+            if (typeof window.loading === 'function') {
+                window.loading();
+            }
+        } else if (msg.type === 'error') {
+            if (typeof window.failed === 'function') {
+                window.failed(msg.error);
+            }
+        } else if (msg.type === 'refresh') {
+            // Background says new data is ready
+            refreshState().then(function() {
+                if (typeof window.refreshTickets === 'function') {
+                    window.refreshTickets();
+                }
+            });
+        }
+    }
+
+    port.onMessage.addListener(handlePortMessage);
+
     var state = {
         settings: { zendeskDomain: '', viewID: null, userID: null },
         model: {
@@ -25,6 +61,8 @@
         },
     };
 
+    var viewsCache = [];
+
     async function refreshState() {
         var resp = await sendMessage({ type: 'getState' });
         if (resp && resp.ok) {
@@ -33,25 +71,142 @@
         return state;
     }
 
+    function renderViewSelect() {
+        var select = $('#view-select');
+        if (!select.length) {
+            return;
+        }
+
+        var current = state.settings.viewID;
+        var allowed = Array.isArray(state.settings.viewFilterIds) ? state.settings.viewFilterIds : [];
+        var allowedSet = {};
+        for (var k = 0; k < allowed.length; k++) {
+            allowedSet[String(allowed[k])] = true;
+        }
+
+        select.empty();
+        select.append('<option value="">Select…</option>');
+
+        var currentWasAdded = false;
+
+        for (var i = 0; i < viewsCache.length; i++) {
+            var v = viewsCache[i];
+            if (!v || v.active === false) {
+                continue;
+            }
+
+            var isAllowed = (allowed.length === 0) || !!allowedSet[String(v.id)];
+            if (!isAllowed && current && String(v.id) !== String(current)) {
+                continue;
+            }
+            var selected = (current && String(v.id) === String(current)) ? ' selected' : '';
+            if (selected) {
+                currentWasAdded = true;
+            }
+            select.append('<option value="' + v.id + '"' + selected + '>' +
+                String(v.title || v.id) + '</option>');
+        }
+
+        // If current view isn't in the views list (or filtered out), keep it visible.
+        if (current && !currentWasAdded) {
+            select.append('<option value="' + current + '" selected>' +
+                String(current) + '</option>');
+        }
+
+        if (!state.settings.zendeskDomain) {
+            select.prop('disabled', true);
+        } else {
+            select.prop('disabled', false);
+        }
+    }
+
+    async function loadViews() {
+        if (!state.settings.zendeskDomain) {
+            viewsCache = [];
+            renderViewSelect();
+            return;
+        }
+
+        var resp = await sendMessage({
+            type: 'listViews',
+            zendeskDomain: state.settings.zendeskDomain,
+        });
+
+        if (resp && resp.ok && resp.data && Array.isArray(resp.data.views)) {
+            viewsCache = resp.data.views;
+        } else {
+            viewsCache = [];
+        }
+        renderViewSelect();
+    }
+
     $(function() {
 
-        port.onMessage.addListener(function(msg) {
-            if (!msg || !msg.type) {
+        var isChangingView = false;
+
+        $('#view-select').on('change', function() {
+            if (isChangingView) {
                 return;
             }
-            if (msg.type === 'progress') {
-                window.setProgress(msg.value);
-            } else if (msg.type === 'loading') {
-                window.loading();
-            } else if (msg.type === 'error') {
-                window.failed(msg.error);
-            } else if (msg.type === 'refresh') {
-                // Background says new data is ready
-                refreshState().then(function() {
-                    window.refreshTickets();
-                });
+            var nextViewId = $(this).val();
+            if (!nextViewId) {
+                return;
             }
+
+            isChangingView = true;
+            window.loading();
+
+            state.settings.viewID = parseInt(nextViewId, 10) || null;
+            sendMessage({ type: 'setSettings', settings: state.settings })
+                .then(function() {
+                    return sendMessage({ type: 'refreshTickets' });
+                })
+                .then(function(resp) {
+                    if (resp && resp.ok) {
+                        state = resp.data;
+                    }
+                    renderViewSelect();
+                    window.refreshTickets();
+                })
+                .catch(function(err) {
+                    window.failed(err && err.message ? err.message : String(err));
+                })
+                .finally(function() {
+                    isChangingView = false;
+                });
         });
+
+        window.loading = function() {
+            $('#loading').html('Loading...');
+        };
+
+        window.setProgress = function(progress_value) {
+            var progressbarElement = $("#progressbar");
+
+            progressbarElement.css('opacity', '1');
+            progressbarElement.progressbar({
+                value: progress_value
+            });
+
+            if (progress_value >= 100) {
+                progressbarElement.css('opacity', '0');
+            }
+        };
+
+        window.refreshTickets = function() {
+            console.log('Background told me to refresh');
+            show_tickets();
+            add_ticket_click_handlers();
+            $('#loading').html('');
+        };
+
+        window.failed = function(error) {
+            console.log('Background experienced error');
+            $('#error').html('Error - ' + error);
+            $('#error').css('display', 'block');
+            $('#loading').html('');
+            $('ul').empty();
+        };
 
         var today = {
             now: null,
@@ -122,10 +277,10 @@
             var timeB = new Date(get_property(b, 'ThisTicket.created_at'));
           **/
           
-            var timeA = new Date(get_property(a, '._lastComment.created_a'));
-            var timeB = new Date(get_property(b, '._lastComment.created_a'));
-            respondedA = (today.startTime < timeA && timeA < today.endTime) ? 1 : 0;
-            respondedB = (today.startTime < timeB && timeB < today.endTime) ? 1 : 0;
+            var timeA = new Date(get_property(a, '_lastComment.created_at'));
+            var timeB = new Date(get_property(b, '_lastComment.created_at'));
+            var respondedA = (today.startTime < timeA && timeA < today.endTime) ? 1 : 0;
+            var respondedB = (today.startTime < timeB && timeB < today.endTime) ? 1 : 0;
             return respondedA - respondedB;
         }
 
@@ -209,9 +364,10 @@
 
                 var thisTicket = ticketsArray[index];
                 
-                var latestCommentBody = thisTicket._lastComment.body;
-                var latestCommentDate = new Date(thisTicket._lastComment.created_at);
-                var latestCommentTimeStr = moment(latestCommentDate).fromNow();
+                var lastComment = thisTicket._lastComment || { body: '', created_at: null };
+                var latestCommentBody = lastComment.body || '';
+                var latestCommentDate = lastComment.created_at ? new Date(lastComment.created_at) : null;
+                var latestCommentTimeStr = latestCommentDate ? moment(latestCommentDate).fromNow() : '';
                 var description = '';
                 if (latestCommentBody.length > 152) {
                     description = latestCommentBody.substring(0, 151) + '... [' + latestCommentTimeStr + ']';
@@ -237,7 +393,7 @@
                 // var requester = bg.model.users[];
 
                 tickets += 
-                    '<li data-ticketid="' + thisTicket.id + '"class=tickets-li>' + " " + thisTicket.id + subject +
+                    '<li data-ticketid="' + thisTicket.id + '" class="tickets-li">' + " " + thisTicket.id + subject +
                     '<div class="responded ' + answeredToday + '"></div>' +
                     '<div class="priority ' + priority + '"></div>' +
                     '<div class="starred ' + isStarred + '"></div>' +
@@ -266,7 +422,7 @@
 
         function handler_launch_ticket(e) {
 
-            var ID = $(this).attr('data-ticketId');
+            var ID = $(this).attr('data-ticketid');
             console.log('Opening ticket ' + ID);
             sendMessage({ type: 'launchLink', objectID: ID, isView: false });
         }
@@ -286,7 +442,7 @@
         function handler_toggle_favorite(e) {
 
             e.stopPropagation(); // stop click event on div underneath from firing
-            var ID = $(this).parent().attr('data-ticketId');
+            var ID = $(this).parent().attr('data-ticketid');
             console.log('toggling starred for ' + ID);
             sendMessage({ type: 'toggleStar', ticketId: ID }).then(function() {
                 refreshState().then(function() {
@@ -295,47 +451,21 @@
             });
         }
 
-        window.loading = function() {
-
-            $('#loading').html('Loading...');
-        };
-
-        window.setProgress = function(progress_value) {
-
-            var progressbarElement = $("#progressbar");
-
-            progressbarElement.css('opacity', '1');
-            progressbarElement.progressbar({
-                value: progress_value
-            });
-
-            if (progress_value >= 100) {
-                progressbarElement.css('opacity', '0');
-            }
-        };
-
-        window.refreshTickets = function() {
-
-            console.log('Background told me to refresh');
-            show_tickets();
-            add_ticket_click_handlers();
-            $('#loading').html('');
-        };
-
-        window.failed = function(error) {
-
-            console.log('Background experienced error');
-            $('#error').html('Error - ' + error);
-            $('#error').css('display', 'block');
-            $('#loading').html('');
-            $('ul').empty();
-        };
-
         update_start_and_end_time();
         $('#view-icon').click(handler_launch_view); // only needs to attach once
 
+        uiReady = true;
+        if (pendingPortMessages.length) {
+            var queued = pendingPortMessages.slice(0);
+            pendingPortMessages = [];
+            queued.forEach(handlePortMessage);
+        }
+
         window.loading();
         refreshState()
+            .then(function() {
+                return loadViews();
+            })
             .then(function() {
                 show_tickets();
                 add_ticket_click_handlers();
@@ -347,6 +477,9 @@
                 if (resp && resp.ok) {
                     state = resp.data;
                 }
+                return loadViews();
+            })
+            .then(function() {
                 window.refreshTickets();
             })
             .catch(function(err) {

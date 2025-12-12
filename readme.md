@@ -2,6 +2,12 @@
 
 A Chrome extension that lists a view's tickets in prioritized order.
 
+This is a fork of the following Chrome Extension. The original git repo is long gone. I had it personally saved locally.
+
+Tribute to the original author.
+
+https://chromewebstore.google.com/detail/zendesk-prioritizer/doplkcmbmmndfieconhlhpffkihmjaic
+
 **Key features:**
 
 * Indicates which tickets have received a public response today
@@ -17,6 +23,10 @@ A Chrome extension that lists a view's tickets in prioritized order.
 Navigate to `chrome://extensions`, enable developer mode, and load this project as an unpacked extension.
 
 # Release Notes
+##v0.1.0
+* Support for Manifest v3
+* Modernized UI
+* Queue Switching support
 
 ##v0.0.4
 * Settings page and popup UI tweaks
