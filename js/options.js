@@ -19,6 +19,8 @@
         viewID: null,
         userID: null,
         viewFilterIds: [],
+        notifyViewID: null,
+        pollInterval: 5,
     };
 
     $(function() {
@@ -27,15 +29,21 @@
             settings.zendeskDomain = inputDomain.val();
             settings.userID = parseInt(inputUserId.val(), 10) || null;
             settings.viewID = parseInt(inputViewId.val(), 10) || null;
+            settings.notifyViewID = parseInt(inputNotifyViewId.val(), 10) || null;
+            settings.pollInterval = parseInt(inputPollInterval.val(), 10) || 5;
         }
 
         var inputDomain = $('#input-domain');
         var inputUserId = $('#input-userid');
         var inputViewId = $('#input-viewid');
+        var inputNotifyViewId = $('#input-notify-viewid');
+        var inputPollInterval = $('#input-poll-interval');
         var buttonDetectUserId = $('#button-detectuserid');
         var buttonListUserViews = $('#button-viewselect');
+        var buttonNotifyViewSelect = $('#button-notify-viewselect');
         var buttonLogIn = $('#button-login');
         var buttonLoadViews = $('#button-loadviews');
+        var buttonTestNotification = $('#button-test-notification');
         var viewFilterList = $('#view-filter-list');
 
         var viewsCache = [];
@@ -44,6 +52,8 @@
             inputDomain.val(settings.zendeskDomain);
             inputUserId.val(settings.userID);
             inputViewId.val(settings.viewID);
+            inputNotifyViewId.val(settings.notifyViewID);
+            inputPollInterval.val(settings.pollInterval);
         }
 
         function save() {
@@ -167,7 +177,7 @@
         function list_user_views() {
 
             // Clean up dropdown menu
-            $('ul.dropdown-menu').empty();
+            $('#dropdown-1 .dropdown-menu').empty();
             buttonListUserViews.dropdown('disable');
 
             if (!inputDomain.val()) {
@@ -187,7 +197,11 @@
                         throw new Error((response && response.error) ? response.error : 'Unknown error');
                     }
                     inputViewId.css('color', '#c6c8c8');
-                    add_views_from_response_to_dropdown({ views: response.data.views });
+                    add_views_from_response_to_dropdown($('#dropdown-1 .dropdown-menu'), response.data.views, function(viewId) {
+                        inputViewId.val(viewId);
+                        buttonListUserViews.dropdown('hide');
+                        save();
+                    });
                     buttonListUserViews.dropdown('enable');
                     buttonListUserViews.dropdown('show');
                 })
@@ -195,6 +209,44 @@
                     buttonListUserViews.removeAttr('disabled');
                     inputViewId.val(err && err.message ? err.message : String(err));
                     inputViewId.css('color', '#ec514e');
+                });
+        }
+
+        function list_notify_views() {
+
+            // Clean up dropdown menu
+            $('#dropdown-2 .dropdown-menu').empty();
+            buttonNotifyViewSelect.dropdown('disable');
+
+            if (!inputDomain.val()) {
+                show_error_domain();
+                return;
+            }
+
+            buttonNotifyViewSelect.attr('disabled', true);
+            load();  // load to clear error messages
+
+            normalize_settings_from_inputs();
+
+            sendMessage({ type: 'listViews', zendeskDomain: settings.zendeskDomain })
+                .then(function(response) {
+                    buttonNotifyViewSelect.removeAttr('disabled');
+                    if (!response || !response.ok) {
+                        throw new Error((response && response.error) ? response.error : 'Unknown error');
+                    }
+                    inputNotifyViewId.css('color', '#c6c8c8');
+                    add_views_from_response_to_dropdown($('#dropdown-2 .dropdown-menu'), response.data.views, function(viewId) {
+                        inputNotifyViewId.val(viewId);
+                        buttonNotifyViewSelect.dropdown('hide');
+                        save();
+                    });
+                    buttonNotifyViewSelect.dropdown('enable');
+                    buttonNotifyViewSelect.dropdown('show');
+                })
+                .catch(function(err) {
+                    buttonNotifyViewSelect.removeAttr('disabled');
+                    inputNotifyViewId.val(err && err.message ? err.message : String(err));
+                    inputNotifyViewId.css('color', '#ec514e');
                 });
         }
 
@@ -215,10 +267,9 @@
             return array;
         }
 
-        function add_views_from_response_to_dropdown(response) {
+        function add_views_from_response_to_dropdown(dropdownMenu, viewsObject, onSelect) {
 
-            $('ul.dropdown-menu').empty();
-            var viewsObject = response.views;
+            dropdownMenu.empty();
             var viewsArray = object_to_array(viewsObject);
             var views = '';
 
@@ -234,8 +285,13 @@
                     thisView.title + '</li>';
             }
 
-            $('ul.dropdown-menu').append(views);
-            $('.view-item').click(handler_fill_viewid_input_with_selection);
+            dropdownMenu.append(views);
+            dropdownMenu.find('.view-item').click(function() {
+                var viewId = $(this).attr('data-viewid');
+                if (onSelect) {
+                    onSelect(viewId);
+                }
+            });
         }
 
         function open_login_window() {
@@ -246,14 +302,6 @@
             } else {
                 show_error_domain();
             }
-        }
-
-        function handler_fill_viewid_input_with_selection() {
-
-            var viewId = $(this).attr('data-viewid');
-            inputViewId.val(viewId);
-            buttonListUserViews.dropdown('hide');
-            save();
         }
 
         sendMessage({ type: 'getSettings' })
@@ -272,8 +320,32 @@
         inputDomain.on('input', save);
         inputUserId.on('input', save);
         inputViewId.on('input', save);
+        inputNotifyViewId.on('input', save);
+        inputPollInterval.on('input', save);
         buttonDetectUserId.click(detect_user_id);
         buttonListUserViews.click(list_user_views);
+        buttonNotifyViewSelect.click(list_notify_views);
+        buttonTestNotification.click(function() {
+            try {
+                chrome.notifications.create(`test_${Date.now()}`, {
+                    type: 'basic',
+                    iconUrl: chrome.runtime.getURL('icon/icon-128.png'),
+                    title: 'Test Notification',
+                    message: 'Submitter: Test User',
+                    contextMessage: 'This is a test notification from Zendesk Prioritizer.',
+                }, function() {
+                    if (chrome.runtime.lastError) {
+                        sendMessage({ type: 'testNotification' }).catch(function() {
+                            // ignore
+                        });
+                    }
+                });
+            } catch (e) {
+                sendMessage({ type: 'testNotification' }).catch(function() {
+                    // ignore
+                });
+            }
+        });
         buttonLogIn.click(open_login_window);
         buttonLoadViews.click(load_views_for_filter);
     });

@@ -30,6 +30,8 @@ const settings = {
     viewID: null,
     userID: null,
     viewFilterIds: [],
+    notifyViewID: null,
+    pollInterval: 5,
 
     async load() {
         const loaded = await storageGet(null);
@@ -37,6 +39,8 @@ const settings = {
         this.viewID = loaded.viewID || null;
         this.userID = loaded.userID || null;
         this.viewFilterIds = Array.isArray(loaded.viewFilterIds) ? loaded.viewFilterIds : [];
+        this.notifyViewID = loaded.notifyViewID || null;
+        this.pollInterval = loaded.pollInterval || 5;
     },
 
     async save() {
@@ -45,7 +49,10 @@ const settings = {
             viewID: this.viewID,
             userID: this.userID,
             viewFilterIds: this.viewFilterIds,
+            notifyViewID: this.notifyViewID,
+            pollInterval: this.pollInterval,
         });
+        update_alarm();
     },
 };
 
@@ -90,6 +97,7 @@ async function ensureInitialized() {
     await settings.load();
     await model.load();
     update_time();
+    update_alarm();
 }
 
 function snapshotState() {
@@ -99,6 +107,8 @@ function snapshotState() {
             viewID: settings.viewID,
             userID: settings.userID,
             viewFilterIds: settings.viewFilterIds,
+            notifyViewID: settings.notifyViewID,
+            pollInterval: settings.pollInterval,
         },
         model: {
             tickets: model.tickets,
@@ -491,6 +501,81 @@ async function launch_zd_link(objectID, isView) {
     await tabsCreate({ url: newURL });
 }
 
+async function update_alarm() {
+    await chrome.alarms.clear('pollTickets');
+    if (settings.notifyViewID && settings.pollInterval > 0) {
+        chrome.alarms.create('pollTickets', {
+            periodInMinutes: settings.pollInterval,
+        });
+    }
+}
+
+async function check_notification_queue() {
+    if (!settings.notifyViewID || !settings.zendeskDomain) {
+        return;
+    }
+
+    try {
+        const url = `https://${settings.zendeskDomain}.zendesk.com/api/v2/views/${settings.notifyViewID}/tickets.json`;
+        const data = await fetchJSON(url, { trackProgress: false });
+        const tickets = data.tickets || [];
+        const currentIds = tickets.map((t) => t.id);
+
+        const stored = await storageGet(['notifySeen']);
+        const seen = stored.notifySeen;
+
+        if (!seen || seen.viewId !== settings.notifyViewID) {
+            await storageSet({ notifySeen: { viewId: settings.notifyViewID, ids: currentIds } });
+            return;
+        }
+
+        const newTickets = tickets.filter((t) => !seen.ids.includes(t.id));
+        if (newTickets.length > 0) {
+            const ticketWord = newTickets.length === 1 ? 'ticket' : 'tickets';
+            const firstTicket = newTickets[0] || {};
+            const submitterId = firstTicket.submitter_id || firstTicket.requester_id;
+            let submitterName = 'Unknown';
+            if (submitterId) {
+                try {
+                    const userResp = await fetchJSON(
+                        `https://${settings.zendeskDomain}.zendesk.com/api/v2/users/${submitterId}.json`,
+                        { trackProgress: false },
+                    );
+                    submitterName = (userResp && userResp.user && userResp.user.name) ? userResp.user.name : submitterName;
+                } catch {
+                    // ignore
+                }
+            }
+
+            const rawDescription = String(firstTicket.description || firstTicket.subject || '').replace(/\s+/g, ' ').trim();
+            const description = rawDescription.length > 120 ? `${rawDescription.slice(0, 117)}...` : rawDescription;
+            chrome.notifications.create(`notify_${Date.now()}`, {
+                type: 'basic',
+                iconUrl: chrome.runtime.getURL('icon/icon-128.png'),
+                title: `${newTickets.length} new ${ticketWord} in monitored view`,
+                message: `Submitter: ${submitterName}`,
+                contextMessage: description,
+            });
+        }
+
+        await storageSet({ notifySeen: { viewId: settings.notifyViewID, ids: currentIds } });
+    } catch (e) {
+        console.error('Error polling monitored view', e);
+    }
+}
+
+chrome.alarms.onAlarm.addListener((alarm) => {
+    if (alarm.name === 'pollTickets') {
+        check_notification_queue();
+    }
+});
+
+chrome.notifications.onClicked.addListener(() => {
+    if (settings.notifyViewID) {
+        launch_zd_link(settings.notifyViewID, true);
+    }
+});
+
 chrome.runtime.onInstalled.addListener(() => {
     // Best-effort init
     ensureInitialized();
@@ -526,6 +611,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                 settings.zendeskDomain = next.zendeskDomain || '';
                 settings.viewID = Number.parseInt(next.viewID, 10) || null;
                 settings.userID = Number.parseInt(next.userID, 10) || null;
+                settings.notifyViewID = Number.parseInt(next.notifyViewID, 10) || null;
+                settings.pollInterval = Number.parseInt(next.pollInterval, 10) || 5;
                 if (Array.isArray(next.viewFilterIds)) {
                     settings.viewFilterIds = next.viewFilterIds
                         .map((v) => Number.parseInt(v, 10))
@@ -561,6 +648,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             }
             case 'launchLink': {
                 await launch_zd_link(message.objectID, message.isView);
+                sendResponse({ ok: true });
+                return;
+            }
+            case 'testNotification': {
+                chrome.notifications.create(`test_${Date.now()}`, {
+                    type: 'basic',
+                    iconUrl: chrome.runtime.getURL('icon/icon-128.png'),
+                    title: 'Test Notification',
+                    message: 'Submitter: Test User',
+                    contextMessage: 'This is a test notification from Zendesk Prioritizer.',
+                });
                 sendResponse({ ok: true });
                 return;
             }

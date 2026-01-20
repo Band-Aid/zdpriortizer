@@ -1,14 +1,16 @@
 {
     "name": "Zendesk Prioritizer",
     "description": "Provides more advanced sorting of Zendesk tickets",
-    "version": "0.1.0.0",
+    "version": "0.1.1.0",
     "background": {
         "service_worker": "js/background.js"
     },
     "permissions": [
         "storage",
         "tabs",
-        "scripting"
+        "scripting",
+        "notifications",
+        "alarms"
     ],
     "host_permissions": [
         "https://*.zendesk.com/*"
