@@ -23,6 +23,14 @@ https://chromewebstore.google.com/detail/zendesk-prioritizer/doplkcmbmmndfieconh
 Navigate to `chrome://extensions`, enable developer mode, and load this project as an unpacked extension.
 
 # Release Notes
+## Unreleased
+* Notification behavior updated: at most one notification is shown per poll cycle to avoid multiple simultaneous alerts when several monitored views have new tickets.
+
+##v1.1.0
+* Ability to choose which Views you want to show in popup
+* Monitor for new tickets in up to 3 Views
+* Jquery Update
+
 ##v0.1.0
 * Support for Manifest v3
 * Modernized UI

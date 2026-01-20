@@ -531,6 +531,7 @@ async function check_notification_queue() {
     try {
         const stored = await storageGet(['notifySeen']);
         const seenMap = stored.notifySeen && typeof stored.notifySeen === 'object' ? stored.notifySeen : {};
+        let notifiedThisCycle = false;
 
         for (const viewId of notifyIds.slice(0, 3)) {
             const url = `https://${settings.zendeskDomain}.zendesk.com/api/v2/views/${viewId}/tickets.json`;
@@ -544,7 +545,7 @@ async function check_notification_queue() {
             }
 
             const newTickets = tickets.filter((t) => !seenMap[viewId].includes(t.id));
-            if (newTickets.length > 0) {
+            if (newTickets.length > 0 && !notifiedThisCycle) {
                 const ticketWord = newTickets.length === 1 ? 'ticket' : 'tickets';
                 const firstTicket = newTickets[0] || {};
                 const submitterId = firstTicket.submitter_id || firstTicket.requester_id;
@@ -571,6 +572,7 @@ async function check_notification_queue() {
                     contextMessage: description,
                 });
                 lastNotifiedViewId = viewId;
+                notifiedThisCycle = true; // Only notify once per poll cycle
             }
 
             seenMap[viewId] = currentIds;
