@@ -46,16 +46,15 @@
             <h2>Notifications</h2>
         </header>
         <div class="option-line">
-            Monitor View ID
-            <input type="text" class="topcoat-text-input--large" id="input-notify-viewid" value="" placeholder="Leave empty to disable">
-            <button class="topcoat-button dropdown-disabled" id="button-notify-viewselect" data-dropdown="#dropdown-2">Select</button>
+            Select up to 3 views to monitor to monitor new tickets:
         </div>
+        <div id="notify-view-list" class="views-list"></div>
         <div class="option-line">
             Poll Interval (minutes)
             <input type="number" class="topcoat-text-input--large" id="input-poll-interval" value="5" min="1">
         </div>
         <div class="option-line">
-            <button class="topcoat-button--large" id="button-test-notification">Test Notification</button>
+            <button class="topcoat-button--large" id="button-test-notification">Run Poll Check Now</button>
         </div>
 
         <header>
@@ -76,10 +75,6 @@
         <ul class="dropdown-menu">
             <!-- <li data-viewid="12345">Todo</li> -->
         </ul>
-    </div>
-
-    <div id="dropdown-2" class="dropdown dropdown-tip">
-        <ul class="dropdown-menu"></ul>
     </div>
 
 </body>
