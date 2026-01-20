@@ -30,7 +30,7 @@ const settings = {
     viewID: null,
     userID: null,
     viewFilterIds: [],
-    notifyViewID: null,
+    notifyViewIds: [],
     pollInterval: 5,
 
     async load() {
@@ -39,7 +39,13 @@ const settings = {
         this.viewID = loaded.viewID || null;
         this.userID = loaded.userID || null;
         this.viewFilterIds = Array.isArray(loaded.viewFilterIds) ? loaded.viewFilterIds : [];
-        this.notifyViewID = loaded.notifyViewID || null;
+        if (Array.isArray(loaded.notifyViewIds)) {
+            this.notifyViewIds = loaded.notifyViewIds;
+        } else if (loaded.notifyViewID) {
+            this.notifyViewIds = [loaded.notifyViewID];
+        } else {
+            this.notifyViewIds = [];
+        }
         this.pollInterval = loaded.pollInterval || 5;
     },
 
@@ -49,7 +55,7 @@ const settings = {
             viewID: this.viewID,
             userID: this.userID,
             viewFilterIds: this.viewFilterIds,
-            notifyViewID: this.notifyViewID,
+            notifyViewIds: this.notifyViewIds,
             pollInterval: this.pollInterval,
         });
         update_alarm();
@@ -107,7 +113,7 @@ function snapshotState() {
             viewID: settings.viewID,
             userID: settings.userID,
             viewFilterIds: settings.viewFilterIds,
-            notifyViewID: settings.notifyViewID,
+            notifyViewIds: settings.notifyViewIds,
             pollInterval: settings.pollInterval,
         },
         model: {
@@ -503,62 +509,74 @@ async function launch_zd_link(objectID, isView) {
 
 async function update_alarm() {
     await chrome.alarms.clear('pollTickets');
-    if (settings.notifyViewID && settings.pollInterval > 0) {
+    const notifyIds = (settings.notifyViewIds || []).filter((v) => Number.isFinite(v));
+    if (notifyIds.length > 0 && settings.pollInterval > 0) {
         chrome.alarms.create('pollTickets', {
             periodInMinutes: settings.pollInterval,
         });
     }
 }
 
+let lastNotifiedViewId = null;
+
 async function check_notification_queue() {
-    if (!settings.notifyViewID || !settings.zendeskDomain) {
+    const notifyIds = (settings.notifyViewIds || [])
+        .map((v) => Number.parseInt(v, 10))
+        .filter((v) => Number.isFinite(v));
+
+    if (!notifyIds.length || !settings.zendeskDomain) {
         return;
     }
 
     try {
-        const url = `https://${settings.zendeskDomain}.zendesk.com/api/v2/views/${settings.notifyViewID}/tickets.json`;
-        const data = await fetchJSON(url, { trackProgress: false });
-        const tickets = data.tickets || [];
-        const currentIds = tickets.map((t) => t.id);
-
         const stored = await storageGet(['notifySeen']);
-        const seen = stored.notifySeen;
+        const seenMap = stored.notifySeen && typeof stored.notifySeen === 'object' ? stored.notifySeen : {};
 
-        if (!seen || seen.viewId !== settings.notifyViewID) {
-            await storageSet({ notifySeen: { viewId: settings.notifyViewID, ids: currentIds } });
-            return;
-        }
+        for (const viewId of notifyIds.slice(0, 3)) {
+            const url = `https://${settings.zendeskDomain}.zendesk.com/api/v2/views/${viewId}/tickets.json`;
+            const data = await fetchJSON(url, { trackProgress: false });
+            const tickets = data.tickets || [];
+            const currentIds = tickets.map((t) => t.id);
 
-        const newTickets = tickets.filter((t) => !seen.ids.includes(t.id));
-        if (newTickets.length > 0) {
-            const ticketWord = newTickets.length === 1 ? 'ticket' : 'tickets';
-            const firstTicket = newTickets[0] || {};
-            const submitterId = firstTicket.submitter_id || firstTicket.requester_id;
-            let submitterName = 'Unknown';
-            if (submitterId) {
-                try {
-                    const userResp = await fetchJSON(
-                        `https://${settings.zendeskDomain}.zendesk.com/api/v2/users/${submitterId}.json`,
-                        { trackProgress: false },
-                    );
-                    submitterName = (userResp && userResp.user && userResp.user.name) ? userResp.user.name : submitterName;
-                } catch {
-                    // ignore
-                }
+            if (!Array.isArray(seenMap[viewId])) {
+                seenMap[viewId] = currentIds;
+                continue;
             }
 
-            const rawDescription = String(firstTicket.description || firstTicket.subject || '').replace(/\s+/g, ' ').trim();
-            const description = rawDescription.length > 120 ? `${rawDescription.slice(0, 117)}...` : rawDescription;
-            chrome.notifications.create(`notify_${Date.now()}`, {
-                type: 'basic',
-                iconUrl: chrome.runtime.getURL('icon/icon-128.png'),
-                title: `${newTickets.length} new ${ticketWord} in monitored view`,
-                message: `Submitter: ${submitterName}`,
-                contextMessage: description,
-            });
+            const newTickets = tickets.filter((t) => !seenMap[viewId].includes(t.id));
+            if (newTickets.length > 0) {
+                const ticketWord = newTickets.length === 1 ? 'ticket' : 'tickets';
+                const firstTicket = newTickets[0] || {};
+                const submitterId = firstTicket.submitter_id || firstTicket.requester_id;
+                let submitterName = 'Unknown';
+                if (submitterId) {
+                    try {
+                        const userResp = await fetchJSON(
+                            `https://${settings.zendeskDomain}.zendesk.com/api/v2/users/${submitterId}.json`,
+                            { trackProgress: false },
+                        );
+                        submitterName = (userResp && userResp.user && userResp.user.name) ? userResp.user.name : submitterName;
+                    } catch {
+                        // ignore
+                    }
+                }
+
+                const rawDescription = String(firstTicket.description || firstTicket.subject || '').replace(/\s+/g, ' ').trim();
+                const description = rawDescription.length > 120 ? `${rawDescription.slice(0, 117)}...` : rawDescription;
+                chrome.notifications.create(`notify_${Date.now()}`, {
+                    type: 'basic',
+                    iconUrl: chrome.runtime.getURL('icon/icon-128.png'),
+                    title: `${newTickets.length} new ${ticketWord} in monitored view`,
+                    message: `Submitter: ${submitterName}`,
+                    contextMessage: description,
+                });
+                lastNotifiedViewId = viewId;
+            }
+
+            seenMap[viewId] = currentIds;
         }
 
-        await storageSet({ notifySeen: { viewId: settings.notifyViewID, ids: currentIds } });
+        await storageSet({ notifySeen: seenMap });
     } catch (e) {
         console.error('Error polling monitored view', e);
     }
@@ -571,8 +589,8 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 });
 
 chrome.notifications.onClicked.addListener(() => {
-    if (settings.notifyViewID) {
-        launch_zd_link(settings.notifyViewID, true);
+    if (lastNotifiedViewId) {
+        launch_zd_link(lastNotifiedViewId, true);
     }
 });
 
@@ -611,7 +629,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                 settings.zendeskDomain = next.zendeskDomain || '';
                 settings.viewID = Number.parseInt(next.viewID, 10) || null;
                 settings.userID = Number.parseInt(next.userID, 10) || null;
-                settings.notifyViewID = Number.parseInt(next.notifyViewID, 10) || null;
+                if (Array.isArray(next.notifyViewIds)) {
+                    settings.notifyViewIds = next.notifyViewIds
+                        .map((v) => Number.parseInt(v, 10))
+                        .filter((v) => Number.isFinite(v));
+                } else if (next.notifyViewID) {
+                    settings.notifyViewIds = [Number.parseInt(next.notifyViewID, 10) || null]
+                        .filter((v) => Number.isFinite(v));
+                } else {
+                    settings.notifyViewIds = [];
+                }
                 settings.pollInterval = Number.parseInt(next.pollInterval, 10) || 5;
                 if (Array.isArray(next.viewFilterIds)) {
                     settings.viewFilterIds = next.viewFilterIds
@@ -659,6 +686,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                     message: 'Submitter: Test User',
                     contextMessage: 'This is a test notification from Zendesk Prioritizer.',
                 });
+                sendResponse({ ok: true });
+                return;
+            }
+            case 'forcePollCheck': {
+                await check_notification_queue();
                 sendResponse({ ok: true });
                 return;
             }
