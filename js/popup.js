@@ -208,7 +208,7 @@
 
         window.failed = function(error) {
             console.log('Background experienced error');
-            $('#error').html('Error - ' + error);
+            $('#error').html('Error - ' + escapeHtml(error));
             $('#error').css('display', 'block');
             $('#loading').html('');
             $('ul').empty();
@@ -252,6 +252,18 @@
                 array.push(object[key]);
             }
             return array;
+        }
+
+        function escapeHtml(unsafe) {
+            if (unsafe == null || unsafe === '') {
+                return '';
+            }
+            return String(unsafe)
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;")
+                .replace(/'/g, "&#039;");
         }
 
         function get_property(object, key) {
@@ -399,12 +411,12 @@
                 // var requester = bg.model.users[];
 
                 tickets += 
-                    '<li data-ticketid="' + thisTicket.id + '" class="tickets-li">' + " " + thisTicket.id + subject +
+                    '<li data-ticketid="' + escapeHtml(thisTicket.id) + '" class="tickets-li">' + " " + escapeHtml(thisTicket.id) + escapeHtml(subject) +
                     '<div class="responded ' + answeredToday + '"></div>' +
-                    '<div class="priority ' + priority + '"></div>' +
+                    '<div class="priority ' + escapeHtml(priority) + '"></div>' +
                     '<div class="starred ' + isStarred + '"></div>' +
-                    '<div class="description">' + description + '</div>' +
-                    '<div class="requester">' + requesterName + '</div>' +
+                    '<div class="description">' + escapeHtml(description) + '</div>' +
+                    '<div class="requester">' + escapeHtml(requesterName) + '</div>' +
                     '</li>';
             }
 

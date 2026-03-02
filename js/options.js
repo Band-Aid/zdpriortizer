@@ -25,6 +25,18 @@
 
     $(function() {
 
+        function escapeHtml(unsafe) {
+            if (unsafe == null || unsafe === '') {
+                return '';
+            }
+            return String(unsafe)
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;")
+                .replace(/'/g, "&#039;");
+        }
+
         function normalize_settings_from_inputs() {
             settings.zendeskDomain = inputDomain.val();
             settings.userID = parseInt(inputUserId.val(), 10) || null;
@@ -92,9 +104,9 @@
                 var checked = selected.length === 0 ? '' : (selectedSet[String(v.id)] ? ' checked' : '');
                 var row = '';
                 row += '<label class="view-row">';
-                row += '<input type="checkbox" class="view-filter-checkbox" data-viewid="' + v.id + '"' + checked + '>';
-                row += '<div class="view-title">' + String(v.title || v.id) + '</div>';
-                row += '<div class="view-meta">' + v.id + '</div>';
+                row += '<input type="checkbox" class="view-filter-checkbox" data-viewid="' + escapeHtml(v.id) + '"' + checked + '>';
+                row += '<div class="view-title">' + escapeHtml(String(v.title || v.id)) + '</div>';
+                row += '<div class="view-meta">' + escapeHtml(v.id) + '</div>';
                 row += '</label>';
                 viewFilterList.append(row);
             }
@@ -141,9 +153,9 @@
                 var checked = selectedSet[String(v.id)] ? ' checked' : '';
                 var row = '';
                 row += '<label class="view-row">';
-                row += '<input type="checkbox" class="notify-view-checkbox" data-viewid="' + v.id + '"' + checked + '>';
-                row += '<div class="view-title">' + String(v.title || v.id) + '</div>';
-                row += '<div class="view-meta">' + v.id + '</div>';
+                row += '<input type="checkbox" class="notify-view-checkbox" data-viewid="' + escapeHtml(v.id) + '"' + checked + '>';
+                row += '<div class="view-title">' + escapeHtml(String(v.title || v.id)) + '</div>';
+                row += '<div class="view-meta">' + escapeHtml(v.id) + '</div>';
                 row += '</label>';
                 notifyViewList.append(row);
             }
